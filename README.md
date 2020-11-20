@@ -1,5 +1,5 @@
-# PyVerify
-ElectionGuard Verifier, in Python
+# ElectionGuard Verify
+An ElectionGuard Verifier, in Python
 
 This repository contains an independent verifier for elections conducted using Microsoft's [ElectionGuard](https://github.com/microsoft/electionguard) system.
 
