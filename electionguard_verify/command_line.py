@@ -10,7 +10,7 @@ from os.path import join, split
 from glob import glob
 from typing import Iterable
 from argparse import ArgumentParser
-from logging import basicConfig, INFO, ERROR
+from logging import basicConfig, INFO
 from electionguard.serializable import read_json
 from electionguard.election import CiphertextElectionContext, ElectionDescription, ElectionConstants
 from electionguard.tally import PublishedCiphertextTally, PublishedPlaintextTally
@@ -107,9 +107,9 @@ def main() -> int:
 
     # Set logging verbosity
     if (args.verbose):
-        basicConfig(level=INFO, format='%(levelname)s: %(message)s')
+        basicConfig(level=INFO, format='%(message)s')
     else:
-        basicConfig(level=ERROR, format='%(levelname)s: %(message)s')
+        basicConfig(format='%(message)s')
 
     # Verify election
     is_valid: bool = verify(

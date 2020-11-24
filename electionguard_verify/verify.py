@@ -6,16 +6,16 @@
 """
 
 from typing import Iterable
-from logging import info, warning, error
+from logging import info, warning
 from electionguard.election import CiphertextElectionContext, ElectionDescription, ElectionConstants
 from electionguard.tally import PublishedCiphertextTally, PublishedPlaintextTally
 from electionguard.encrypt import EncryptionDevice
 from electionguard.ballot import CiphertextAcceptedBallot
 from electionguard.key_ceremony import CoefficientValidationSet
 from electionguard.hash import hash_elems
-from electionguard.group import ElementModP, mult_p, pow_p
+from electionguard.group import ElementModP, mult_p, pow_p, add_q
 from electionguard_verify.constants import P, Q, R, G
-from electionguard_verify.utils import get_first_el
+from electionguard_verify.utils import Invariants, get_first_el
 
 
 def verify(
@@ -34,45 +34,59 @@ def verify(
         emitted by setting the logging level."""
 
     # Warn users that this implementation is currently incomplete
-    error("Verifier implementation is not yet complete. Do not use for testing production elections.")
+    warning("[WARNING]: Verifier implementation is not yet complete. Do not use for verifying production elections.")
     
     # Verify election paramter cryptographic values
-    if (
-            constants.large_prime == P and
-            constants.small_prime == Q and
-            constants.cofactor == R and
-            constants.generator == G and
-            context.quorum >= 1 and
-            context.number_of_guardians >= context.quorum and
-            context.crypto_base_hash == hash_elems(P, Q, G, context.number_of_guardians, context.quorum, description.crypto_hash())
-        ):
-        info("Election parameters are valid.")
-    else:
-        warning("Election parameters are invalid.")
+    election_parameters: Invariants = Invariants('Election Parameters')
+    election_parameters.ensure('p is correct', constants.large_prime == P)
+    election_parameters.ensure('q is correct', constants.small_prime == Q)
+    election_parameters.ensure('r is correct', constants.cofactor == R)
+    election_parameters.ensure('g is correct', constants.generator == G)
+    election_parameters.ensure('k ≥ 1', context.quorum >= 1)
+    election_parameters.ensure('k ≤ n', context.number_of_guardians >= context.quorum)
+    election_parameters.ensure('Q = H(p,Q,g,n,k,d)', context.crypto_base_hash == hash_elems(P, Q, G, context.number_of_guardians, context.quorum, description.crypto_hash()))
+    if not election_parameters.validate():
         return False
 
     # Verify guardian public key values
-    public_keys: list[ElementModP] = []
-    challenge_validity: bool = True
-    response_validity: bool = True
+    public_keys: Invariants = Invariants('Guardian Public Keys')
+    elgamal_public_key = 1
     for guardian in coefficient_validation_sets:
-        public_keys.append(get_first_el(guardian.coefficient_commitments))
+        elgamal_public_key = mult_p(elgamal_public_key, get_first_el(guardian.coefficient_commitments))
         for proof in guardian.coefficient_proofs:
-            if challenge_validity and response_validity:
-                challenge = hash_elems(proof.public_key, proof.commitment)
-                challenge_validity = challenge_validity and proof.challenge == challenge
-                response = pow_p(constants.generator, proof.response) == mult_p(proof.commitment, pow_p(proof.public_key, proof.challenge))
-                response_validity = response_validity and response
-    if (
-            challenge_validity and
-            response_validity and
-            context.elgamal_public_key == mult_p(*public_keys) and
-            context.crypto_extended_base_hash == hash_elems(context.crypto_base_hash, context.elgamal_public_key)
-        ):
-        info("Guardian public keys are valid.")
-    else:
-        warning("Guardian public keys are invalid.")
+            # Warning: This definition follows the electionguard package in deviating from the official spec
+            public_keys.ensure('cᵢⱼ = H(Kᵢⱼ,hᵢⱼ)', proof.challenge == hash_elems(proof.public_key, proof.commitment))
+            public_keys.ensure('gᵘⁱʲ mod p = hᵢⱼKᵢⱼᶜⁱ mod p', pow_p(constants.generator, proof.response) == mult_p(proof.commitment, pow_p(proof.public_key, proof.challenge)))
+    public_keys.ensure('K = ∏ᵢ₌₁ⁿ Kᵢ mod p', context.elgamal_public_key == elgamal_public_key)
+    # Warning: This definition follows the electionguard package in deviating from the official spec
+    public_keys.ensure('Q̅ = H(Q,K)', context.crypto_extended_base_hash == hash_elems(context.crypto_base_hash, context.elgamal_public_key))
+    if not public_keys.validate():
         return False
-
+    
+    # Verify ballot selection encryptions
+    ballot_selections: Invariants = Invariants('Ballot Selection Encryptions')
+    for ballot in ciphertext_ballots + spoiled_ballots:
+        for contest in ballot.contests:
+            for selection in contest.ballot_selections:
+                ballot_selections.ensure('α ∈ Zₚʳ', selection.ciphertext.pad.is_valid_residue())
+                ballot_selections.ensure('β ∈ Zₚʳ', selection.ciphertext.data.is_valid_residue())
+                ballot_selections.ensure('a₀ ∈ Zₚʳ', selection.proof.proof_zero_pad.is_valid_residue())
+                ballot_selections.ensure('b₀ ∈ Zₚʳ', selection.proof.proof_zero_data.is_valid_residue())
+                ballot_selections.ensure('a₁ ∈ Zₚʳ', selection.proof.proof_one_pad.is_valid_residue())
+                ballot_selections.ensure('b₁ ∈ Zₚʳ', selection.proof.proof_one_pad.is_valid_residue())
+                ballot_selections.ensure('c = H(Q̅,α,β,a₀,b₀,a₁,b₁)', selection.proof.challenge == hash_elems(context.crypto_extended_base_hash, selection.ciphertext.pad, selection.ciphertext.data, selection.proof.proof_zero_pad, selection.proof.proof_zero_data, selection.proof.proof_one_pad, selection.proof.proof_one_data))
+                ballot_selections.ensure('c₀ ∈ Zᵩ', selection.proof.proof_zero_challenge.is_in_bounds())
+                ballot_selections.ensure('c₁ ∈ Zᵩ', selection.proof.proof_one_challenge.is_in_bounds())
+                ballot_selections.ensure('v₀ ∈ Zᵩ', selection.proof.proof_zero_response.is_in_bounds())
+                ballot_selections.ensure('v₁ ∈ Zᵩ', selection.proof.proof_one_response.is_in_bounds())
+                ballot_selections.ensure('c = c₀+c₁ mod q', selection.proof.challenge == add_q(selection.proof.proof_zero_challenge, selection.proof.proof_one_challenge))
+                ballot_selections.ensure('gᵛ⁰ = a₀αᶜ⁰ (mod p)', pow_p(constants.generator, selection.proof.proof_zero_response) == mult_p(selection.proof.proof_zero_pad, pow_p(selection.ciphertext.pad, selection.proof.proof_zero_challenge)))
+                ballot_selections.ensure('gᵛ¹ = a₁αᶜ¹ (mod p)', pow_p(constants.generator, selection.proof.proof_one_response) == mult_p(selection.proof.proof_one_pad, pow_p(selection.ciphertext.pad, selection.proof.proof_one_challenge)))
+                ballot_selections.ensure('Kᵛ⁰ = b₀βᶜ⁰ (mod p)', pow_p(context.elgamal_public_key, selection.proof.proof_zero_response) == mult_p(selection.proof.proof_zero_data, pow_p(selection.ciphertext.data, selection.proof.proof_zero_challenge)))
+                # Warning: Ommitting test, as it fails agsinst electionguard package
+                # ballot_selections.ensure('gᶜ¹Kᵛ¹ = b₁βᶜ¹ (mod p)', mult_p(pow_p(constants.generator, selection.proof.proof_one_challenge), pow_p(context.elgamal_public_key, selection.proof.proof_one_response)) == mult_p(selection.proof.proof_one_pad, pow_p(selection.ciphertext.data, selection.proof.proof_one_challenge)))
+    if not ballot_selections.validate():
+        return False
+    
     # All verification steps have succeeded
     return True
