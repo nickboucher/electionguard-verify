@@ -15,7 +15,7 @@ from electionguard.key_ceremony import CoefficientValidationSet
 from electionguard.hash import hash_elems
 from electionguard.group import ElementModP, mult_p, pow_p, add_q
 from electionguard_verify.constants import P, Q, R, G
-from electionguard_verify.utils import Invariants, get_first_el
+from electionguard_verify.utils import Invariants, Contests, get_first_el
 
 
 def verify(
@@ -83,10 +83,24 @@ def verify(
                 ballot_selections.ensure('gᵛ⁰ = a₀αᶜ⁰ (mod p)', pow_p(constants.generator, selection.proof.proof_zero_response) == mult_p(selection.proof.proof_zero_pad, pow_p(selection.ciphertext.pad, selection.proof.proof_zero_challenge)))
                 ballot_selections.ensure('gᵛ¹ = a₁αᶜ¹ (mod p)', pow_p(constants.generator, selection.proof.proof_one_response) == mult_p(selection.proof.proof_one_pad, pow_p(selection.ciphertext.pad, selection.proof.proof_one_challenge)))
                 ballot_selections.ensure('Kᵛ⁰ = b₀βᶜ⁰ (mod p)', pow_p(context.elgamal_public_key, selection.proof.proof_zero_response) == mult_p(selection.proof.proof_zero_data, pow_p(selection.ciphertext.data, selection.proof.proof_zero_challenge)))
-                # Warning: Ommitting test, as it fails agsinst electionguard package
+                # Warning: Ommitting test, as it fails against electionguard package
                 # ballot_selections.ensure('gᶜ¹Kᵛ¹ = b₁βᶜ¹ (mod p)', mult_p(pow_p(constants.generator, selection.proof.proof_one_challenge), pow_p(context.elgamal_public_key, selection.proof.proof_one_response)) == mult_p(selection.proof.proof_one_pad, pow_p(selection.ciphertext.data, selection.proof.proof_one_challenge)))
     if not ballot_selections.validate():
         return False
     
+    # Verify adherence to vote limits
+    vote_limits: Invariants = Invariants('Vote Limits')
+    contests: Contests = Contests(description)
+    for ballot in ciphertext_ballots + spoiled_ballots:
+        for contest in ballot.contests:
+            contest_description = contests[contest.object_id]
+            vote_limits.ensure('all contests appear in election description', contest_description != None)
+            if contest_description:
+                vote_limits.ensure('placeholder options match contest selection limit', sum(1 for x in contest.ballot_selections if x.is_placeholder_selection) == contest_description.votes_allowed)
+            vote_limits.ensure('V ∈ Zᵩ', contest.proof.response.is_in_bounds())
+            # Warning: Multiple tests are ommitted, as the current electionguard package does not seem to output (A,B) and (a,b)
+    if not vote_limits.validate():
+        return False
+
     # All verification steps have succeeded
     return True

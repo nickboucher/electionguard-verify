@@ -8,6 +8,7 @@
 from typing import TypeVar
 from logging import info
 from electionguard.group import ElementModP, int_to_p
+from electionguard.election import ElectionDescription, ContestDescription
 
 
 T: TypeVar = TypeVar('T')
@@ -47,6 +48,24 @@ class Invariants():
             info(f'[INVALID]: {self.title}')
             info(error_msg)
         return validity
+
+class Contests():
+    """Speeds up access to contest descriptions through object_id indexing."""
+
+    contests: dict[str,ContestDescription]
+
+    def __init__(self, description: ElectionDescription):
+        """Indexes contest descriptions by object_id for quick lookups."""
+        self.contests = {}
+        for contest in description.contests:
+            self.contests[contest.object_id] = contest
+    
+    def __getitem__(self, contest: str) -> ContestDescription:
+        """Returns the requested contest, or None if no such contest exists."""
+        if contest in self.contests:
+            return self.contests[contest]
+        else:
+            return None
 
 
 def get_first_el(els: list[T]) -> T:
