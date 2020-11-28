@@ -5,10 +5,12 @@
     calculations.
 """
 
-from typing import TypeVar
+from typing import TypeVar, Iterable
 from logging import info, warning
 from electionguard.group import ElementModP, int_to_p
 from electionguard.election import ElectionDescription, ContestDescription
+from electionguard.ballot import CiphertextAcceptedBallot, CiphertextBallotContest, CiphertextBallotSelection
+from electionguard.key_ceremony import CoefficientValidationSet
 
 
 T: TypeVar = TypeVar('T')
@@ -67,6 +69,23 @@ class Contests():
         else:
             return None
 
+class Guardians():
+    """Speeds up access to guardians through owner_id indexing."""
+
+    guardians: dict[str,CoefficientValidationSet]
+
+    def __init__(self, guardians: Iterable[CoefficientValidationSet]):
+        """Indexes guardians by owner_id for quick lookups."""
+        self.guardians = {}
+        for guardian in guardians:
+            self.guardians[guardian.owner_id] = guardian
+    
+    def __getitem__(self, guardian: str) -> ContestDescription:
+        """Returns the requested guardian, or None if no such guardian exists."""
+        if guardian in self.guardians:
+            return self.guardians[guardian]
+        else:
+            return None
 
 def get_first_el(els: list[T]) -> T:
     """Returns the first element of `els`, or None if it is empty."""
@@ -74,6 +93,34 @@ def get_first_el(els: list[T]) -> T:
         return els[0]
     else:
         return None
+
+def get_contest(ballot: CiphertextAcceptedBallot, contest_id: str) -> CiphertextBallotContest:
+    """Given a ballot, gets the supplied contest. If the contest appears more than once,
+       None is returned."""
+    result: CiphertextBallotContest = None
+    for contest in ballot.contests:
+        if contest.object_id == contest_id:
+            if result != None:
+                warn('Ballot contains multiple entries for the same contest.')
+                return None
+            else:
+                result = contest
+    return result
+
+def get_selection(ballot: CiphertextAcceptedBallot, contest_id: str, selection_id: str) -> CiphertextBallotSelection:
+    """Given a ballot, gets the supplied selection from within the supplied contest.
+       If the contest or selection appear more than once, None is returned."""
+    result: CiphertextBallotSelection = None
+    contest: CiphertextBallotContest = get_contest(ballot, contest_id)
+    if contest:
+        for selection in contest.ballot_selections:
+            if selection.object_id == selection_id:
+                if result != None:
+                    warn('Ballot contains multiple entries for the same selection.')
+                    return None
+                else:
+                    result = selection
+    return result
 
 def warn(msg: str) -> None:
     """Emits a warning message `msg` to the logs."""

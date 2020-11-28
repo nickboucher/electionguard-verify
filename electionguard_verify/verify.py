@@ -9,12 +9,13 @@ from typing import Iterable
 from electionguard.election import CiphertextElectionContext, ElectionDescription, ElectionConstants
 from electionguard.tally import PublishedCiphertextTally, PublishedPlaintextTally
 from electionguard.encrypt import EncryptionDevice
-from electionguard.ballot import CiphertextAcceptedBallot
+from electionguard.ballot import CiphertextAcceptedBallot, CiphertextBallotSelection, BallotBoxState
 from electionguard.key_ceremony import CoefficientValidationSet
 from electionguard.hash import hash_elems
-from electionguard.group import ElementModP, mult_p, pow_p, add_q
+from electionguard.group import ElementModP, mult_p, pow_p, add_q, int_to_p
+from electionguard.chaum_pedersen import ChaumPedersenProof
 from electionguard_verify.constants import P, Q, R, G
-from electionguard_verify.utils import Invariants, Contests, get_first_el, warn
+from electionguard_verify.utils import Invariants, Contests, Guardians, get_first_el, get_selection, warn
 
 
 def verify(
@@ -49,7 +50,7 @@ def verify(
 
     # Verify guardian public key values
     public_keys: Invariants = Invariants('Guardian Public Keys')
-    elgamal_public_key = 1
+    elgamal_public_key: ElementModP = int_to_p(1)
     for guardian in coefficient_validation_sets:
         elgamal_public_key = mult_p(elgamal_public_key, get_first_el(guardian.coefficient_commitments))
         for proof in guardian.coefficient_proofs:
@@ -66,7 +67,7 @@ def verify(
     
     # Verify ballot selection encryptions
     ballot_selections: Invariants = Invariants('Ballot Selection Encryptions')
-    for ballot in ciphertext_ballots + spoiled_ballots:
+    for ballot in ciphertext_ballots:
         for contest in ballot.contests:
             for selection in contest.ballot_selections:
                 ballot_selections.ensure('α ∈ Zₚʳ', selection.ciphertext.pad.is_valid_residue())
@@ -93,7 +94,7 @@ def verify(
     # Verify adherence to vote limits
     vote_limits: Invariants = Invariants('Vote Limits')
     contests: Contests = Contests(description)
-    for ballot in ciphertext_ballots + spoiled_ballots:
+    for ballot in ciphertext_ballots:
         for contest in ballot.contests:
             contest_description = contests[contest.object_id]
             vote_limits.ensure('all contests appear in election description', contest_description != None)
@@ -112,6 +113,33 @@ def verify(
     # - Fails to include any ballot device information in the hash calculation, as required by the electionguard spec
     warn('The official electionguard Python implementation fails to index ballots and adhere to the proper ballot chaining hash definition. This error will be ignored by this verifier.')
     if not ballot_chaining.validate():
+        return False
+    
+    ballot_aggregations: Invariants = Invariants('Ballot Aggregations & Partial Decryptions')
+    guardians: Guardians = Guardians(coefficient_validation_sets)
+    for contest in plaintext_tally.contests.values():
+        for selection in contest.selections.values():
+            A: ElementModP = int_to_p(1)
+            B: ElementModP = int_to_p(1)
+            for ballot in ciphertext_ballots:
+                if ballot.state == BallotBoxState.CAST:
+                    ballot_selection: CiphertextBallotSelection = get_selection(ballot, contest.object_id, selection.object_id)
+                    if ballot_selection:
+                        A = mult_p(A, ballot_selection.ciphertext.pad)
+                        B = mult_p(B, ballot_selection.ciphertext.data)
+            ballot_aggregations.ensure('A = ∏ⱼαⱼ', selection.message.pad == A)
+            ballot_aggregations.ensure('B = ∏ⱼβⱼ', selection.message.data == B)
+            for share in selection.shares:
+                if share.proof:
+                    ballot_aggregations.ensure('vᵢ ∈ Zᵩ', share.proof.response.is_in_bounds())
+                    ballot_aggregations.ensure('aᵢ ∈ Zₚʳ', share.proof.pad.is_valid_residue())
+                    ballot_aggregations.ensure('bᵢ ∈ Zₚʳ', share.proof.data.is_valid_residue())
+                    ballot_aggregations.ensure('cᵢ = H(Q̅,A,B,aᵢ,bᵢ,Mᵢ)', share.proof.challenge == hash_elems(context.crypto_extended_base_hash, selection.message.pad, selection.message.data, share.proof.pad, share.proof.data, share.share))
+                    if share.guardian_id in guardians.guardians:
+                        ballot_aggregations.ensure('gᵛⁱ = aᵢKᵢᶜⁱ (mod p)', pow_p(constants.generator, share.proof.response) == mult_p(share.proof.pad, pow_p(get_first_el(guardians[share.guardian_id].coefficient_commitments), share.proof.challenge)))
+                    else:
+                        ballot_aggregations.ensure('tally share guardians are valid election guardians', False)
+    if not ballot_aggregations.validate():
         return False
 
     # All verification steps have succeeded
