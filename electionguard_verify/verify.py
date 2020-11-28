@@ -6,7 +6,6 @@
 """
 
 from typing import Iterable
-from logging import info, warning
 from electionguard.election import CiphertextElectionContext, ElectionDescription, ElectionConstants
 from electionguard.tally import PublishedCiphertextTally, PublishedPlaintextTally
 from electionguard.encrypt import EncryptionDevice
@@ -15,7 +14,7 @@ from electionguard.key_ceremony import CoefficientValidationSet
 from electionguard.hash import hash_elems
 from electionguard.group import ElementModP, mult_p, pow_p, add_q
 from electionguard_verify.constants import P, Q, R, G
-from electionguard_verify.utils import Invariants, Contests, get_first_el
+from electionguard_verify.utils import Invariants, Contests, get_first_el, warn
 
 
 def verify(
@@ -34,7 +33,7 @@ def verify(
         emitted by setting the logging level."""
 
     # Warn users that this implementation is currently incomplete
-    warning("[WARNING]: Verifier implementation is not yet complete. Do not use for verifying production elections.")
+    warn("Verifier implementation is not yet complete. Do not use for verifying production elections.")
     
     # Verify election paramter cryptographic values
     election_parameters: Invariants = Invariants('Election Parameters')
@@ -57,8 +56,10 @@ def verify(
             # Warning: This definition follows the electionguard package in deviating from the official spec
             public_keys.ensure('cᵢⱼ = H(Kᵢⱼ,hᵢⱼ)', proof.challenge == hash_elems(proof.public_key, proof.commitment))
             public_keys.ensure('gᵘⁱʲ mod p = hᵢⱼKᵢⱼᶜⁱ mod p', pow_p(constants.generator, proof.response) == mult_p(proof.commitment, pow_p(proof.public_key, proof.challenge)))
+    warn('The official electionguard Python implementation has an improper ballot challenge definition. This error will be ignored by this verifier.')
     public_keys.ensure('K = ∏ᵢ₌₁ⁿ Kᵢ mod p', context.elgamal_public_key == elgamal_public_key)
     # Warning: This definition follows the electionguard package in deviating from the official spec
+    warn('The official electionguard Python implementation has an improper extended base hash definition. This error will be ignored by this verifier.')
     public_keys.ensure('Q̅ = H(Q,K)', context.crypto_extended_base_hash == hash_elems(context.crypto_base_hash, context.elgamal_public_key))
     if not public_keys.validate():
         return False
@@ -85,6 +86,7 @@ def verify(
                 ballot_selections.ensure('Kᵛ⁰ = b₀βᶜ⁰ (mod p)', pow_p(context.elgamal_public_key, selection.proof.proof_zero_response) == mult_p(selection.proof.proof_zero_data, pow_p(selection.ciphertext.data, selection.proof.proof_zero_challenge)))
                 # Warning: Ommitting test, as it fails against electionguard package
                 # ballot_selections.ensure('gᶜ¹Kᵛ¹ = b₁βᶜ¹ (mod p)', mult_p(pow_p(constants.generator, selection.proof.proof_one_challenge), pow_p(context.elgamal_public_key, selection.proof.proof_one_response)) == mult_p(selection.proof.proof_one_pad, pow_p(selection.ciphertext.data, selection.proof.proof_one_challenge)))
+    warn('The official electionguard Python implementation always fails the validation gᶜ¹Kᵛ¹ = b₁βᶜ¹ (mod p). This error will be ignored by this verifier.')
     if not ballot_selections.validate():
         return False
     
@@ -99,7 +101,17 @@ def verify(
                 vote_limits.ensure('placeholder options match contest selection limit', sum(1 for x in contest.ballot_selections if x.is_placeholder_selection) == contest_description.votes_allowed)
             vote_limits.ensure('V ∈ Zᵩ', contest.proof.response.is_in_bounds())
             # Warning: Multiple tests are ommitted, as the current electionguard package does not seem to output (A,B) and (a,b)
+    warn('The official electionguard Python implementation fails to publish the required values (A,B) and (a,b) for every ballot, making it impossible to verify multiple required tests. This error will be ignored by this verifier.')
     if not vote_limits.validate():
+        return False
+
+    ballot_chaining: Invariants = Invariants('Ballot Chaining')
+    # Warning: It is currently not possible to verify ballot chaining, as the electionguard package contains the following errors:
+    # - Fails to establish an ordering of published encrypted ballots by providing a suitable index field
+    # - Contains no "first" ballot with previous_hash == H₀ = H(Q̅), per the specification
+    # - Fails to include any ballot device information in the hash calculation, as required by the electionguard spec
+    warn('The official electionguard Python implementation fails to index ballots and adhere to the proper ballot chaining hash definition. This error will be ignored by this verifier.')
+    if not ballot_chaining.validate():
         return False
 
     # All verification steps have succeeded

@@ -6,7 +6,7 @@
 """
 
 from typing import TypeVar
-from logging import info
+from logging import info, warning
 from electionguard.group import ElementModP, int_to_p
 from electionguard.election import ElectionDescription, ContestDescription
 
@@ -74,3 +74,7 @@ def get_first_el(els: list[T]) -> T:
         return els[0]
     else:
         return None
+
+def warn(msg: str) -> None:
+    """Emits a warning message `msg` to the logs."""
+    warning(f'[WARNING]: {msg}')
