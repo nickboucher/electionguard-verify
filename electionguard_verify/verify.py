@@ -7,7 +7,7 @@
 
 from typing import Iterable
 from electionguard.election import CiphertextElectionContext, ElectionDescription, ElectionConstants
-from electionguard.tally import PublishedCiphertextTally, PublishedPlaintextTally
+from electionguard.tally import PublishedCiphertextTally, PlaintextTally
 from electionguard.encrypt import EncryptionDevice
 from electionguard.ballot import CiphertextAcceptedBallot, CiphertextBallotSelection, BallotBoxState
 from electionguard.key_ceremony import CoefficientValidationSet
@@ -26,15 +26,12 @@ def verify(
     ciphertext_ballots: Iterable[CiphertextAcceptedBallot],
     spoiled_ballots: Iterable[CiphertextAcceptedBallot],
     ciphertext_tally: PublishedCiphertextTally,
-    plaintext_tally: PublishedPlaintextTally,
+    plaintext_tally: PlaintextTally,
     coefficient_validation_sets: Iterable[CoefficientValidationSet] = None
 ) -> bool:
     """ Returns whether the election results provided as arguments represent
         a valid ElectionGuard election. Verification details can be
         emitted by setting the logging level."""
-
-    # Warn users that this implementation is currently incomplete
-    warn("Verifier implementation is not yet complete. Do not use for verifying production elections.")
     
     # Verify election paramter cryptographic values
     election_parameters: Invariants = Invariants('Election Parameters')
@@ -177,17 +174,47 @@ def verify(
     # Verify correct decryption of tallies
     tally_decryption: Invariants = Invariants('Decryption of Tallies')
     for contest in plaintext_tally.contests.values():
-        contest_description = contests[contest.object_id]
-        tally_decryption.ensure('tally contest label exists in ballot coding file', contest_description != None)
-        if contest_description:
-            selection_labels = map(lambda x: x.object_id, contest_description.ballot_selections)
-        else:
-            selection_labels = []
+        tally_decryption.ensure('tally contest label exists in ballot coding file', contest.object_id in contests.contests)
         for selection in contest.selections.values():
-            tally_decryption.ensure('tally selection label exists in ballot coding file', selection.object_id in selection_labels)
             tally_decryption.ensure('B = M (∏ᵢ₌₁ⁿ Mᵢ) mod p', selection.message.data == mult_p(selection.value, *map(lambda x: x.share, selection.shares)))
-    tally_decryption.ensure('M = gᵗ mod p', selection.value == pow_p(constants.generator, selection.tally))
+            tally_decryption.ensure('M = gᵗ mod p', selection.value == pow_p(constants.generator, selection.tally))
     if not tally_decryption.validate():
+        return False
+
+    # Verify spoiled ballots
+    spoils: Invariants = Invariants('Spoiled Ballots')
+    for ballot in plaintext_tally.spoiled_ballots.values():
+        for contest in ballot.values():
+            tally_decryption.ensure('tally contest label exists in ballot coding file', contest.object_id in contests.contests)
+            for selection in contest.selections.values():
+                for share in selection.shares:
+                    spoils.ensure('tally share contains exactly one proof or recovered part', (not share.proof) ^ (not share.recovered_parts))
+                    if share.proof:
+                        spoils.ensure('vᵢ ∈ Zᵩ', share.proof.response.is_in_bounds())
+                        spoils.ensure('aᵢ ∈ Zₚʳ', share.proof.pad.is_valid_residue())
+                        spoils.ensure('bᵢ ∈ Zₚʳ', share.proof.data.is_valid_residue())
+                        spoils.ensure('cᵢ = H(Q̅,A,B,aᵢ,bᵢ,Mᵢ)', share.proof.challenge == hash_elems(context.crypto_extended_base_hash, selection.message.pad, selection.message.data, share.proof.pad, share.proof.data, share.share))
+                        spoils.ensure('Aᵛⁱ = bᵢMᵢᶜⁱ (mod p)', pow_p(selection.message.pad, share.proof.response) == mult_p(share.proof.data, pow_p(share.share, share.proof.challenge)))
+                        if share.guardian_id in guardians.guardians:
+                            spoils.ensure('gᵛⁱ = aᵢKᵢᶜⁱ (mod p)', pow_p(constants.generator, share.proof.response) == mult_p(share.proof.pad, pow_p(get_first_el(guardians[share.guardian_id].coefficient_commitments), share.proof.challenge)))
+                        else:
+                            spoils.ensure('tally share guardians are valid election guardians', False)
+                    if share.recovered_parts:
+                        for part in share.recovered_parts.values():
+                            spoils.ensure('vᵢₗ ∈ Zᵩ', part.proof.response.is_in_bounds())
+                            spoils.ensure('aᵢₗ ∈ Zₚʳ', part.proof.pad.is_valid_residue())
+                            spoils.ensure('bᵢₗ ∈ Zₚʳ', part.proof.data.is_valid_residue())
+                            spoils.ensure('cᵢₗ = H(Q̅,A,B,aᵢₗ,bᵢₗ,Mᵢₗ)', part.proof.challenge == hash_elems(context.crypto_extended_base_hash, selection.message.pad, selection.message.data, part.proof.pad, part.proof.data, part.share))
+                            spoils.ensure('Aᵛⁱˡ = bᵢₗMᵢₗᶜⁱˡ (mod p)', pow_p(selection.message.pad, part.proof.response) == mult_p(part.proof.data, pow_p(part.share, part.proof.challenge)))
+                            if part.guardian_id in guardians.guardians:
+                                spoils.ensure('gᵛⁱˡ = aᵢₗ(∏ⱼ₌₀ᵏ⁻¹Kᵢⱼˡʲ)ᶜⁱˡ (mod p)', pow_p(constants.generator, part.proof.response) == mult_p(part.proof.pad, pow_p(part.recovery_key, part.proof.challenge)))
+                            else:
+                                spoils.ensure('tally share reconstruction guardians are valid election guardians', False)
+                spoils.ensure('B = M (∏ᵢ₌₁ⁿ Mᵢ) mod p', selection.message.data == mult_p(selection.value, *map(lambda x: x.share, selection.shares)))
+                spoils.ensure('M = gᵗ mod p', selection.value == pow_p(constants.generator, selection.tally))
+    # Warning: All other warnings also apply to spoiled ballots.
+    warn('All other warnings also apply to spoiled ballot verification steps.')
+    if not spoils.validate():
         return False
 
     # All verification steps have succeeded

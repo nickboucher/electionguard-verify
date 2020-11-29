@@ -10,10 +10,10 @@ from os.path import join, split
 from glob import glob
 from typing import Iterable
 from argparse import ArgumentParser
-from logging import basicConfig, INFO
+from logging import basicConfig, INFO, ERROR
 from electionguard.serializable import read_json
 from electionguard.election import CiphertextElectionContext, ElectionDescription, ElectionConstants
-from electionguard.tally import PublishedCiphertextTally, PublishedPlaintextTally
+from electionguard.tally import PublishedCiphertextTally, PlaintextTally
 from electionguard.encrypt import EncryptionDevice
 from electionguard.ballot import CiphertextAcceptedBallot
 from electionguard.key_ceremony import CoefficientValidationSet
@@ -50,6 +50,7 @@ def main() -> int:
     parser.add_argument('-f', '--coefficients-prefix', help="Prefix for coefficient validation set JSON file names, overriding default prefix.")
     parser.add_argument('-F', '--coefficients-dir', help="Directory containing coefficient validation set JSON, overriding election subdirectory.")
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Output vaildation details.')
+    parser.add_argument('-n', '--no-warn', default=False, action='store_true', help='Silence all warnings. Has no effect in verbose mode.')
     args = parser.parse_args()
 
     # Deserialize election results
@@ -71,7 +72,7 @@ def main() -> int:
 
     plaintext_tally_path: str = args.tally or join(args.directory, TALLY_FILE_NAME + JSON_EXT)
     with open(plaintext_tally_path, READ) as f:
-        plaintext_tally: PublishedPlaintextTally = read_json(f.read(), PublishedPlaintextTally)
+        plaintext_tally: PlaintextTally = read_json(f.read(), PlaintextTally)
 
     devices_dir: str = args.devices_dir or join(args.directory, split(DEVICES_DIR)[-1])
     devices_prefix: str = args.devices_prefix or DEVICE_PREFIX
@@ -108,6 +109,8 @@ def main() -> int:
     # Set logging verbosity
     if (args.verbose):
         basicConfig(level=INFO, format='%(message)s')
+    elif (args.no_warn):
+        basicConfig(level=ERROR, format='%(message)s')
     else:
         basicConfig(format='%(message)s')
 
