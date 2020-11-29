@@ -165,5 +165,14 @@ def verify(
     if not missing_guardians.validate():
         return False
 
+    # Verify correctness of construction of replacement partial decryptions
+    reconstructed_decryptions: Invariants = Invariants('Reconstructed Partial Decryptions for Missing Guardians')
+    # Warning: the Lagrange coefficients used in reconstruction are not published. Because of this, it is impossible to verify:
+    # - whether the Lagrange coefficients are correctly computed
+    # - whether the missing tally shares, which depend on the Lagrange coefficients, are correctly computed.
+    warn('The official electionguard Python implementation fails to publish Lagrange coefficients for missing guardian reconstructions, making it impossible to verify these values. This error will be ignored by this verifier.')
+    if not reconstructed_decryptions.validate():
+        return False
+
     # All verification steps have succeeded
     return True
