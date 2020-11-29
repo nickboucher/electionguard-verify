@@ -106,6 +106,7 @@ def verify(
     if not vote_limits.validate():
         return False
 
+    # Verify ballot chaining
     ballot_chaining: Invariants = Invariants('Ballot Chaining')
     # Warning: It is currently not possible to verify ballot chaining, as the electionguard package contains the following errors:
     # - Fails to establish an ordering of published encrypted ballots by providing a suitable index field
@@ -115,6 +116,7 @@ def verify(
     if not ballot_chaining.validate():
         return False
     
+    # Verify correctness of ballot aggregation and partial decryptions
     ballot_aggregations: Invariants = Invariants('Ballot Aggregations & Partial Decryptions')
     guardians: Guardians = Guardians(coefficient_validation_sets)
     for contest in plaintext_tally.contests.values():
@@ -135,11 +137,32 @@ def verify(
                     ballot_aggregations.ensure('aᵢ ∈ Zₚʳ', share.proof.pad.is_valid_residue())
                     ballot_aggregations.ensure('bᵢ ∈ Zₚʳ', share.proof.data.is_valid_residue())
                     ballot_aggregations.ensure('cᵢ = H(Q̅,A,B,aᵢ,bᵢ,Mᵢ)', share.proof.challenge == hash_elems(context.crypto_extended_base_hash, selection.message.pad, selection.message.data, share.proof.pad, share.proof.data, share.share))
+                    ballot_aggregations.ensure('Aᵛⁱ = bᵢMᵢᶜⁱ (mod p)', pow_p(selection.message.pad, share.proof.response) == mult_p(share.proof.data, pow_p(share.share, share.proof.challenge)))
                     if share.guardian_id in guardians.guardians:
                         ballot_aggregations.ensure('gᵛⁱ = aᵢKᵢᶜⁱ (mod p)', pow_p(constants.generator, share.proof.response) == mult_p(share.proof.pad, pow_p(get_first_el(guardians[share.guardian_id].coefficient_commitments), share.proof.challenge)))
                     else:
                         ballot_aggregations.ensure('tally share guardians are valid election guardians', False)
     if not ballot_aggregations.validate():
+        return False
+
+    # Verify correctness of recovered data for missing guardians
+    missing_guardians: Invariants = Invariants('Recovered Data for Missing Guardians')
+    for contest in plaintext_tally.contests.values():
+        for selection in contest.selections.values():
+            for share in selection.shares:
+                missing_guardians.ensure('tally share contains exactly one proof or recovered part', (not share.proof) ^ (not share.recovered_parts))
+                if share.recovered_parts:
+                    for part in share.recovered_parts.values():
+                        missing_guardians.ensure('vᵢₗ ∈ Zᵩ', part.proof.response.is_in_bounds())
+                        missing_guardians.ensure('aᵢₗ ∈ Zₚʳ', part.proof.pad.is_valid_residue())
+                        missing_guardians.ensure('bᵢₗ ∈ Zₚʳ', part.proof.data.is_valid_residue())
+                        missing_guardians.ensure('cᵢₗ = H(Q̅,A,B,aᵢₗ,bᵢₗ,Mᵢₗ)', part.proof.challenge == hash_elems(context.crypto_extended_base_hash, selection.message.pad, selection.message.data, part.proof.pad, part.proof.data, part.share))
+                        missing_guardians.ensure('Aᵛⁱˡ = bᵢₗMᵢₗᶜⁱˡ (mod p)', pow_p(selection.message.pad, part.proof.response) == mult_p(part.proof.data, pow_p(part.share, part.proof.challenge)))
+                        if part.guardian_id in guardians.guardians:
+                            missing_guardians.ensure('gᵛⁱˡ = aᵢₗ(∏ⱼ₌₀ᵏ⁻¹Kᵢⱼˡʲ)ᶜⁱˡ (mod p)', pow_p(constants.generator, part.proof.response) == mult_p(part.proof.pad, pow_p(part.recovery_key, part.proof.challenge)))
+                        else:
+                            missing_guardians.ensure('tally share reconstruction guardians are valid election guardians', False)
+    if not missing_guardians.validate():
         return False
 
     # All verification steps have succeeded
