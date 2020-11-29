@@ -14,10 +14,16 @@ This code can be consumed as a Python package used within other applications or 
 
 ## Installation
 
-After cloning the repository, ElectionGuard Verify can be installed via:
+ElectionGuard Verify can be installed via `pip`:
+
 ```bash
-# Should be run within the root directory of the cloned repository
-pip install .
+pip install electionguard-verify
+```
+
+Alternatively, it can be installed from source:
+```bash
+git clone https://github.com/nickboucher/electionguard-verify.git
+pip install ./electionguard-verify
 ```
 
 The installation requires Python 3.8+. This requirement is, unfortunately, set by the official `electionguard` Microsoft package which is consumed for useful data structure definitions.
