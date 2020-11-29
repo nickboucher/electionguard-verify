@@ -174,5 +174,21 @@ def verify(
     if not reconstructed_decryptions.validate():
         return False
 
+    # Verify correct decryption of tallies
+    tally_decryption: Invariants = Invariants('Decryption of Tallies')
+    for contest in plaintext_tally.contests.values():
+        contest_description = contests[contest.object_id]
+        tally_decryption.ensure('tally contest label exists in ballot coding file', contest_description != None)
+        if contest_description:
+            selection_labels = map(lambda x: x.object_id, contest_description.ballot_selections)
+        else:
+            selection_labels = []
+        for selection in contest.selections.values():
+            tally_decryption.ensure('tally selection label exists in ballot coding file', selection.object_id in selection_labels)
+            tally_decryption.ensure('B = M (∏ᵢ₌₁ⁿ Mᵢ) mod p', selection.message.data == mult_p(selection.value, *map(lambda x: x.share, selection.shares)))
+    tally_decryption.ensure('M = gᵗ mod p', selection.value == pow_p(constants.generator, selection.tally))
+    if not tally_decryption.validate():
+        return False
+
     # All verification steps have succeeded
     return True
