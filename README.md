@@ -1,3 +1,6 @@
+:clock1: | This repo is outdated. The ElectionGuard spec and official implementation have both been refined after the security analysis described in this repo took place. Please refer to more recent security analyses, should they exist, or the current ElectionGuard specification directly. The information in this repository is no longer likely to be accurate.
+:---: | :---
+
 # ElectionGuard Verify
 *An ElectionGuard Verifier, in Python*
 
